@@ -2,6 +2,7 @@ import os
 import time
 import threading
 import requests
+from bs4 import BeautifulSoup
 from flask import Flask
 
 app = Flask(__name__)
@@ -9,119 +10,223 @@ app = Flask(__name__)
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1247262258")
 
-CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+NEWS_URL = "https://www.forexfactory.com/news"
 
 CHECK_INTERVAL = 30
+
+seen_stories = set()
 
 
 @app.route("/")
 def home():
-    return "ToxikWick Forex News Alert"
+    return "ToxikWick Forex Factory News Monitor is running."
 
 
-def telegram_test():
-    if not BOT_TOKEN:
-        print("❌ TELEGRAM_BOT_TOKEN is missing")
-        return
-
+def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": "🟢 ToxikWick monitor diagnostic test is working."
-    }
-
     try:
-        response = requests.post(
+        r = requests.post(
             url,
-            data=payload,
+            data={
+                "chat_id": CHAT_ID,
+                "text": message,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": False
+            },
             timeout=15
         )
 
-        print("TELEGRAM STATUS:", response.status_code)
-
-        if response.ok:
-            print("✅ Telegram connection successful")
-        else:
-            print("❌ Telegram connection failed:", response.text)
+        print("TELEGRAM:", r.status_code, flush=True)
 
     except Exception as e:
-        print("❌ Telegram connection error:", e)
+        print("TELEGRAM ERROR:", repr(e), flush=True)
 
 
-def check_calendar():
+def get_news():
 
-    print("\n==============================")
-    print("CHECKING NEWS CALENDAR")
-    print("==============================")
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 Chrome/139.0 Safari/537.36"
+        )
+    }
 
     try:
 
-        response = requests.get(
-            CALENDAR_URL,
-            headers={
-                "User-Agent": "Mozilla/5.0 ToxikWickNewsAlert"
-            },
+        r = requests.get(
+            NEWS_URL,
+            headers=headers,
             timeout=20
         )
 
-        print("CALENDAR HTTP STATUS:", response.status_code)
+        print(
+            "FOREX FACTORY STATUS:",
+            r.status_code,
+            flush=True
+        )
 
-        response.raise_for_status()
+        r.raise_for_status()
 
-        events = response.json()
-
-        print("TOTAL EVENTS RECEIVED:", len(events))
-
-        high_impact = []
-
-        for event in events:
-
-            if not isinstance(event, dict):
-                continue
-
-            impact = str(event.get("impact", "")).lower()
-
-            if impact in ("high", "red") or "high" in impact:
-
-                high_impact.append(event)
-
-        print("HIGH IMPACT EVENTS:", len(high_impact))
-
-        for event in high_impact[:10]:
-
-            print(
-                "🔴",
-                event.get("country"),
-                "|",
-                event.get("title"),
-                "|",
-                event.get("date")
-            )
-
-        if not high_impact:
-            print("⚠️ No high-impact events found in current response.")
-
-        print("==============================\n")
+        return r.text
 
     except Exception as e:
 
-        print("❌ CALENDAR ERROR:", repr(e))
+        print(
+            "FOREX FACTORY ERROR:",
+            repr(e),
+            flush=True
+        )
+
+        return None
+
+
+def find_high_impact_stories(html):
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    stories = []
+
+    # Find links pointing to Forex Factory news articles.
+    for link in soup.find_all("a", href=True):
+
+        href = link.get("href", "")
+
+        if "/news/" not in href:
+            continue
+
+        title = link.get_text(" ", strip=True)
+
+        if not title:
+            continue
+
+        # Find the nearest surrounding story container.
+        parent = link
+
+        for _ in range(6):
+
+            if parent.parent:
+                parent = parent.parent
+
+            text = parent.get_text(" ", strip=True)
+
+            # Forex Factory marks these stories as:
+            # "High Impact Breaking"
+            if "High Impact Breaking" in text:
+
+                if href.startswith("/"):
+                    url = "https://www.forexfactory.com" + href
+                else:
+                    url = href
+
+                stories.append({
+                    "title": title,
+                    "url": url
+                })
+
+                break
+
+    # Remove duplicates
+    unique = {}
+
+    for story in stories:
+        unique[story["url"]] = story
+
+    return list(unique.values())
+
+
+def make_alert(story):
+
+    return f"""
+🚨 <b>HIGH IMPACT BREAKING NEWS</b>
+
+📰 <b>{story['title']}</b>
+
+🌐 <b>Source:</b> Forex Factory
+
+🔗 {story['url']}
+
+⚠️ <b>NEW HIGH-IMPACT BREAKING STORY</b>
+
+Check the headline before entering any trade.
+"""
 
 
 def monitor():
 
-    print("===================================")
-    print("TOXIKWICK FOREX NEWS ALERT")
-    print("DIAGNOSTIC MONITOR STARTED")
-    print("Checking every", CHECK_INTERVAL, "seconds")
-    print("===================================")
+    global seen_stories
 
-    telegram_test()
+    print(
+        "===================================",
+        flush=True
+    )
+
+    print(
+        "TOXIKWICK FOREX FACTORY MONITOR",
+        flush=True
+    )
+
+    print(
+        "HIGH IMPACT BREAKING NEWS ONLY",
+        flush=True
+    )
+
+    print(
+        "Checking every",
+        CHECK_INTERVAL,
+        "seconds",
+        flush=True
+    )
+
+    print(
+        "===================================",
+        flush=True
+    )
+
+    first_scan = True
 
     while True:
 
-        check_calendar()
+        html = get_news()
+
+        if html:
+
+            stories = find_high_impact_stories(html)
+
+            print(
+                "HIGH IMPACT STORIES FOUND:",
+                len(stories),
+                flush=True
+            )
+
+            for story in stories:
+
+                story_id = story["url"]
+
+                # First scan creates a baseline.
+                # We DO NOT alert for old stories already on the page.
+                if first_scan:
+
+                    seen_stories.add(story_id)
+
+                    continue
+
+                # New story appeared after monitoring started.
+                if story_id not in seen_stories:
+
+                    seen_stories.add(story_id)
+
+                    print(
+                        "🚨 NEW HIGH IMPACT STORY:",
+                        story["title"],
+                        flush=True
+                    )
+
+                    send_telegram(
+                        make_alert(story)
+                    )
+
+        first_scan = False
 
         time.sleep(CHECK_INTERVAL)
 
