@@ -19,7 +19,8 @@ def home():
 
 
 @app.route("/test")
-def test_api():
+def test():
+    return "TEST ROUTE WORKING"
 
     if not PARSE_API_KEY:
         return "PARSE_API_KEY is missing", 500
