@@ -21,6 +21,10 @@ seen_stories = set()
 def home():
     return "ToxikWick Forex Factory News Monitor is running."
 
+@app.route("/test")
+def test():
+    return "TEST ROUTE WORKING"
+
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
