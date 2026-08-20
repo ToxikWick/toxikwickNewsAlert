@@ -93,17 +93,148 @@ def extract_stories(data):
     return stories
 
 
-def is_high_impact(story):
+def is_unexpected_high_impact(story):
 
     impact = str(
         story.get("impact", "")
     ).strip().lower()
 
-    return impact in (
+    if impact not in (
         "high",
         "red",
         "high impact",
         "high-impact"
+    ):
+        return False
+
+    headline = str(
+        story.get("headline", "")
+    ).lower()
+
+    preview = str(
+        story.get("preview", "")
+    ).lower()
+
+    text = headline + " " + preview
+
+    # Scheduled/regular releases we DON'T want.
+    scheduled_terms = [
+        "minutes of the federal open market committee",
+        "fomc minutes",
+        "consumer price index",
+        "cpi",
+        "nonfarm payroll",
+        "non-farm payroll",
+        "employment report",
+        "unemployment rate",
+        "retail sales",
+        "gross domestic product",
+        "gdp",
+        "producer price index",
+        "ppi",
+        "interest rate decision",
+        "rate decision",
+        "monetary policy statement",
+        "central bank minutes",
+        "meeting minutes",
+        "jobless claims",
+        "durable goods orders",
+        "industrial production",
+        "housing starts",
+        "existing home sales",
+        "new home sales"
+    ]
+
+    for term in scheduled_terms:
+
+        if term in headline:
+            return False
+
+    # Strong signals of unexpected news.
+    breaking_terms = [
+        "announces",
+        "announce",
+        "announcement",
+        "unexpected",
+        "emergency",
+        "surprise",
+        "immediate",
+        "effective immediately",
+        "breaking",
+        "tariff",
+        "sanctions",
+        "intervention",
+        "emergency meeting",
+        "suspends",
+        "suspended",
+        "halts",
+        "halted",
+        "imposes",
+        "imposed",
+        "raises",
+        "cuts",
+        "slashes",
+        "launches",
+        "orders",
+        "decree"
+    ]
+
+    for term in breaking_terms:
+
+        if term in headline:
+            return True
+
+    # Government / central-bank announcements
+    # can be unexpected even without "breaking".
+    institutions = [
+        "treasury",
+        "federal reserve",
+        "fed",
+        "ecb",
+        "bank of england",
+        "boe",
+        "bank of japan",
+        "boj",
+        "bank of canada",
+        "boc",
+        "swiss national bank",
+        "snb",
+        "reserve bank of australia",
+        "rba",
+        "reserve bank of new zealand",
+        "rbnz",
+        "white house",
+        "u.s. government",
+        "us government",
+        "government"
+    ]
+
+    announcement_words = [
+        "announces",
+        "announce",
+        "announcement",
+        "plans",
+        "will",
+        "decision",
+        "policy",
+        "action",
+        "measures"
+    ]
+
+    has_institution = any(
+        term in text
+        for term in institutions
+    )
+
+    has_announcement = any(
+        term in headline
+        for term in announcement_words
+    )
+
+    if has_institution and has_announcement:
+        return True
+
+    return False
     )
 
 
@@ -166,12 +297,14 @@ def monitor():
                     continue
 
                 print(
-    "FULL STORY DATA:",
-    story,
+    "STORY:",
+    story.get("headline"),
+    "| IMPACT:",
+    story.get("impact"),
     flush=True
                 )
 
-                if not is_high_impact(story):
+                if not is_unexpected_high_impact(story):
                     continue
 
                 story_id = url
