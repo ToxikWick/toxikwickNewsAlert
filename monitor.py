@@ -166,10 +166,8 @@ def monitor():
                     continue
 
                 print(
-    "STORY:",
-    story.get("headline"),
-    "| IMPACT:",
-    story.get("impact"),
+    "FULL STORY DATA:",
+    story,
     flush=True
                 )
 
