@@ -6,9 +6,17 @@ from flask import Flask
 
 app = Flask(__name__)
 
-BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-PARSE_API_KEY = os.environ["PARSE_API_KEY"]
+# =========================
+# ENVIRONMENT VARIABLES
+# =========================
+
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+PARSE_API_KEY = os.environ.get("PARSE_API_KEY")
+
+# =========================
+# PARSE / FOREX FACTORY API
+# =========================
 
 API_URL = (
     "https://api.parse.bot/scraper/"
@@ -16,23 +24,33 @@ API_URL = (
     "get_news_latest"
 )
 
-# 5 requests/minute is the API limit.
-# We use 60 seconds between checks.
+# Check once every 60 seconds
 CHECK_INTERVAL = 60
 
+# Stories already processed
 seen_stories = set()
 
+
+# =========================
+# WEB SERVER
+# =========================
 
 @app.route("/")
 def home():
     return "ToxikWick Forex Factory News Monitor is running."
 
 
+# =========================
+# TELEGRAM
+# =========================
+
 def send_telegram(message):
+
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     try:
-        r = requests.post(
+
+        response = requests.post(
             url,
             data={
                 "chat_id": CHAT_ID,
@@ -43,16 +61,39 @@ def send_telegram(message):
             timeout=15
         )
 
-        print("TELEGRAM STATUS:", r.status_code, flush=True)
+        print(
+            "TELEGRAM STATUS:",
+            response.status_code,
+            flush=True
+        )
 
     except Exception as e:
-        print("TELEGRAM ERROR:", repr(e), flush=True)
 
+        print(
+            "TELEGRAM ERROR:",
+            repr(e),
+            flush=True
+        )
+
+
+# =========================
+# GET FOREX FACTORY NEWS
+# =========================
 
 def get_news():
 
+    if not PARSE_API_KEY:
+
+        print(
+            "❌ PARSE_API_KEY IS MISSING",
+            flush=True
+        )
+
+        return None
+
     try:
-        r = requests.get(
+
+        response = requests.get(
             API_URL,
             headers={
                 "X-API-Key": PARSE_API_KEY
@@ -60,38 +101,62 @@ def get_news():
             timeout=30
         )
 
-        print("PARSE API STATUS:", r.status_code, flush=True)
+        print(
+            "PARSE API STATUS:",
+            response.status_code,
+            flush=True
+        )
 
-        r.raise_for_status()
+        response.raise_for_status()
 
-        data = r.json()
-
-        return data
+        return response.json()
 
     except Exception as e:
-        print("PARSE API ERROR:", repr(e), flush=True)
+
+        print(
+            "❌ PARSE API ERROR:",
+            repr(e),
+            flush=True
+        )
+
         return None
 
+
+# =========================
+# EXTRACT STORIES
+# =========================
 
 def extract_stories(data):
 
     if not isinstance(data, dict):
         return []
 
-    # Handle the API's data wrapper.
     stories = data.get("data", [])
 
     if isinstance(stories, dict):
-        stories = stories.get("stories", [])
+
+        stories = stories.get(
+            "stories",
+            []
+        )
 
     if not isinstance(stories, list):
-        stories = data.get("stories", [])
+
+        stories = data.get(
+            "stories",
+            []
+        )
 
     if not isinstance(stories, list):
+
         return []
 
     return stories
 
+
+# =========================
+# UNEXPECTED HIGH-IMPACT FILTER
+# =========================
 
 def is_unexpected_high_impact(story):
 
@@ -99,26 +164,23 @@ def is_unexpected_high_impact(story):
         story.get("impact", "")
     ).strip().lower()
 
+    # Only HIGH / RED news
     if impact not in (
         "high",
         "red",
         "high impact",
         "high-impact"
     ):
+
         return False
 
     headline = str(
         story.get("headline", "")
     ).lower()
 
-    preview = str(
-        story.get("preview", "")
-    ).lower()
+    # Scheduled releases that we DON'T want
+    scheduled = [
 
-    text = headline + " " + preview
-
-    # Scheduled/regular releases we DON'T want.
-    scheduled_terms = [
         "minutes of the federal open market committee",
         "fomc minutes",
         "consumer price index",
@@ -145,48 +207,47 @@ def is_unexpected_high_impact(story):
         "new home sales"
     ]
 
-    for term in scheduled_terms:
+    for term in scheduled:
 
         if term in headline:
+
             return False
 
-    # Strong signals of unexpected news.
-    breaking_terms = [
-        "announces",
+    # Strong breaking-news words
+    breaking = [
+
         "announce",
         "announcement",
+        "announces",
         "unexpected",
         "emergency",
         "surprise",
-        "immediate",
-        "effective immediately",
         "breaking",
         "tariff",
+        "sanction",
         "sanctions",
         "intervention",
-        "emergency meeting",
         "suspends",
         "suspended",
         "halts",
         "halted",
         "imposes",
         "imposed",
-        "raises",
-        "cuts",
-        "slashes",
-        "launches",
-        "orders",
-        "decree"
+        "effective immediately",
+        "emergency meeting"
     ]
 
-    for term in breaking_terms:
+    for term in breaking:
 
         if term in headline:
+
             return True
 
-    # Government / central-bank announcements
-    # can be unexpected even without "breaking".
+    # Institutions that can produce unexpected
+    # market-moving announcements
+
     institutions = [
+
         "treasury",
         "federal reserve",
         "fed",
@@ -209,34 +270,18 @@ def is_unexpected_high_impact(story):
         "government"
     ]
 
-    announcement_words = [
-        "announces",
-        "announce",
-        "announcement",
-        "plans",
-        "will",
-        "decision",
-        "policy",
-        "action",
-        "measures"
-    ]
+    for institution in institutions:
 
-    has_institution = any(
-        term in text
-        for term in institutions
-    )
+        if institution in headline:
 
-    has_announcement = any(
-        term in headline
-        for term in announcement_words
-    )
-
-    if has_institution and has_announcement:
-        return True
+            return True
 
     return False
-    )
 
+
+# =========================
+# MONITOR
+# =========================
 
 def monitor():
 
@@ -248,12 +293,12 @@ def monitor():
     )
 
     print(
-        "TOXIKWICK FOREX FACTORY NEWS MONITOR",
+        "TOXIKWICK FOREX FACTORY MONITOR",
         flush=True
     )
 
     print(
-        "HIGH IMPACT BREAKING NEWS ONLY",
+        "UNEXPECTED HIGH-IMPACT NEWS ONLY",
         flush=True
     )
 
@@ -285,73 +330,126 @@ def monitor():
 
             for story in stories:
 
-                if not isinstance(story, dict):
+                if not isinstance(
+                    story,
+                    dict
+                ):
+
                     continue
 
-                headline = story.get("headline", "")
-                url = story.get("url", "")
-                preview = story.get("preview", "")
-                impact = story.get("impact", "")
-
-                if not headline or not url:
-                    continue
-
-                print(
-    "STORY:",
-    story.get("headline"),
-    "| IMPACT:",
-    story.get("impact"),
-    flush=True
+                headline = str(
+                    story.get(
+                        "headline",
+                        ""
+                    )
                 )
 
-                if not is_unexpected_high_impact(story):
+                url = str(
+                    story.get(
+                        "url",
+                        ""
+                    )
+                )
+
+                preview = str(
+                    story.get(
+                        "preview",
+                        ""
+                    )
+                )
+
+                impact = str(
+                    story.get(
+                        "impact",
+                        ""
+                    )
+                )
+
+                print(
+                    "STORY:",
+                    headline,
+                    "| IMPACT:",
+                    impact,
+                    flush=True
+                )
+
+                if not headline or not url:
+
+                    continue
+
+                # Only unexpected high-impact stories
+                if not is_unexpected_high_impact(
+                    story
+                ):
+
                     continue
 
                 story_id = url
 
-                # First scan = establish baseline.
-                # Do NOT alert for old stories.
+                # First scan creates baseline.
+                # Old stories are NOT sent to Telegram.
+
                 if first_scan:
 
-                    seen_stories.add(story_id)
+                    seen_stories.add(
+                        story_id
+                    )
 
                     continue
 
-                # NEW high-impact story.
-                if story_id not in seen_stories:
+                # Ignore duplicates
 
-                    seen_stories.add(story_id)
+                if story_id in seen_stories:
 
-                    print(
-                        "🚨 NEW HIGH-IMPACT STORY:",
-                        headline,
-                        flush=True
-                    )
+                    continue
 
-                    message = (
-                        "🚨 <b>NEW HIGH-IMPACT "
-                        "BREAKING NEWS</b>\n\n"
-                        f"📰 <b>{headline}</b>\n\n"
-                        f"🔴 <b>Impact:</b> {impact}\n\n"
-                    )
+                # New qualifying story
 
-                    if preview:
-                        message += (
-                            f"📝 {preview}\n\n"
-                        )
+                seen_stories.add(
+                    story_id
+                )
+
+                print(
+                    "🚨 NEW HIGH-IMPACT BREAKING NEWS:",
+                    headline,
+                    flush=True
+                )
+
+                message = (
+                    "🚨 <b>TOXIKWICK BREAKING NEWS</b>\n\n"
+                    f"📰 <b>{headline}</b>\n\n"
+                    f"🔴 <b>Impact:</b> HIGH\n\n"
+                )
+
+                if preview:
+
+                    # Keep Telegram message manageable
+                    short_preview = preview[:700]
 
                     message += (
-                        f"🔗 {url}\n\n"
-                        "⚠️ Check price action before "
-                        "entering a trade."
+                        f"📝 {short_preview}\n\n"
                     )
 
-                    send_telegram(message)
+                message += (
+                    f"🔗 {url}\n\n"
+                    "⚠️ Unexpected high-impact news. "
+                    "Check price action before trading."
+                )
+
+                send_telegram(
+                    message
+                )
 
         first_scan = False
 
-        time.sleep(CHECK_INTERVAL)
+        time.sleep(
+            CHECK_INTERVAL
+        )
 
+
+# =========================
+# START APPLICATION
+# =========================
 
 if __name__ == "__main__":
 
@@ -363,7 +461,10 @@ if __name__ == "__main__":
     worker.start()
 
     port = int(
-        os.environ.get("PORT", "10000")
+        os.environ.get(
+            "PORT",
+            "10000"
+        )
     )
 
     app.run(
