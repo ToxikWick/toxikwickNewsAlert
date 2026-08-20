@@ -165,6 +165,14 @@ def monitor():
                 if not headline or not url:
                     continue
 
+                print(
+    "STORY:",
+    story.get("headline"),
+    "| IMPACT:",
+    story.get("impact"),
+    flush=True
+                )
+
                 if not is_high_impact(story):
                     continue
 
